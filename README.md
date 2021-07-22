@@ -1,0 +1,100 @@
+# oledmenu
+小尺寸点阵屏多级配置菜单（2按键）
+
+
+使用示例：
+/*key task*/
+static void taskKey(void *pvParameters)
+{
+	/*key gpio初始化*/
+	KeyInit(_KeySemaphore);
+	for (;;)
+	{
+		/* 等待所有任务发来事件标志 */
+		KeyWait();
+		//获取按键状态、时间
+		KeyScan(&_KeyStatus, &_Key1HoldingTime, &_Key2HoldingTime);
+		/*互斥访问控制-非阻塞*/
+		xSemaphoreTake(_KeyBusySemaphore, portMAX_DELAY);
+		if (_KeyStatus != KEY_STATUS_NO_KEY_PRESS)
+		{
+			UIOnKeyPress(_KeyStatus, _Key1HoldingTime, _Key2HoldingTime);
+		}
+		KeyReset();
+		/*互斥访问控制-释放*/
+		xSemaphoreGive(_KeyBusySemaphore);
+	}
+}
+/*ui task*/
+static void taskUI(void *pvParameters)
+{
+	/*init ui*/
+	UIInit(&GetDataCallback,&DataUpdataCallback);
+	UISetLanguage(_PROJECT_cfg.Language);
+	UIStart(_PROJECT_cfg.ShowLogo);
+
+	for (;;)
+	{
+		xSemaphoreTake(_KeyBusySemaphore, portMAX_DELAY);
+		/*菜单项目筛选*/
+		SetUIItemsEnable();
+		//并刷新主界面显示
+		UIMainLayerRefersh(2); 
+		xSemaphoreGive(_KeyBusySemaphore);
+		delay_tms(40);
+		Wwdt_Feed();
+	}
+}
+
+/* GetDataCallback  */
+void GetDataCallback(uint16_t cmd, char *outdata)
+{
+	//char str[20] = {0};
+	switch (cmd)
+	{
+	case 0xFFFF: //ITEM_TYPE_PASS_INPUT,UI_ITEM_ENABLE,"Password"
+		strcpy(outdata, "0000");
+		break;
+	case 5001:
+		sprintf(outdata, "%03d.%03d.%03d.%03d", _PROJECT_cfg.hreg.UP_IP[0]>>8&0xFF, 
+	    _PROJECT_cfg.hreg.UP_IP[0]&0xFF, _PROJECT_cfg.hreg.UP_IP[1]>>8&0xFF, _PROJECT_cfg.hreg.UP_IP[1]&0xFF);
+	    break;
+    //...
+
+    //...
+    }
+}
+
+/* DataUpdataCallback */
+void DataUpdataCallback(uint16_t cmd, char *indata, char *outdata)
+{
+	char *str = 0;
+	int 	indataLen=strlen(indata);
+	
+	switch (cmd)
+	{
+	case 0xFFFF://0,ITEM_TYPE_PASS_INPUT,UI_ITEM_ENABLE,"""Password""//密码",
+		if(strcmp(indata, _PROJECT_cfg.Password) == 0)
+			outdata[0]='1';
+		else if(strcmp(indata, _PROJECT_cfg.SuperPassword) == 0)
+			outdata[0]='2';
+		else
+			outdata[0]='0';
+	break;
+	case 5001://472, ITEM_TYPE_NUM,UI_ITEM_ENABLE,"IPInput""//"
+		str = strtok(indata, ".");
+		//str = strtok(NULL, str);
+		_PROJECT_cfg.hreg.UP_IP[0] = atoi(str)<<8;
+		str = strtok(NULL, ".");
+		_PROJECT_cfg.hreg.UP_IP[0] |= atoi(str);
+		str = strtok(NULL, ".");
+		_PROJECT_cfg.hreg.UP_IP[1] = atoi(str)<<8;
+		str = strtok(NULL, ".");
+		_PROJECT_cfg.hreg.UP_IP[1] = atoi(str);
+		outdata[0] = '1';
+		_PROJECT_status.UP_CfgChanged=1;
+	break;
+    }
+    //存储参数
+    SaveProfile((uint8_t *)&_PROJECT_cfg, sizeof(_PROJECT_cfg));
+}
